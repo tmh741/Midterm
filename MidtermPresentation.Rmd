@@ -1,0 +1,190 @@
+---
+title: "Exploration of Reef Life Survey Dive Sites"
+author: "Tim Hogan"
+date: "10/20/2019"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+library(stringr)
+library(kableExtra)
+```
+
+```{r,include=FALSE}
+reefdata <- read.csv("Reef_Life_Survey_(RLS)#_Survey_Locations-survey_locations.csv",header=T)
+reef.clean <- subset(reefdata, select=-c(Hour,FID,StateArea,SiteName,PQZipUrl,geom))
+reef.clean %<>% separate(SurveyDate, c("Date","Time"),sep="T")
+reef.clean <- subset(reef.clean, select=-c(Time,Direction))
+reef.clean %<>% mutate(HasRugosityScores = ifelse(HasRugosityScores=="No",0,1))
+reef.clean %<>% mutate(HasVisibility = ifelse(Visibility==0, 0, 1))
+reef.clean$HasVisibility[is.na(reef.clean$HasVisibility)] <- 0
+reef.clean %<>% mutate(Local = ifelse(CountryRegion=="Australia",1,0))
+
+
+reef.summary <- reef.clean %>% group_by(CountryRegion) %>% summarise(SurveyNumber= n(), 
+                                                                     Record.Rugosity=sum(HasRugosityScores)/n(),
+                                                                     Record.Visibility=sum(HasVisibility)/n(),
+                                                                     Earliest=min(Date),Latest=max(Date),
+                                                                     Deepest=max(Depth))
+reef.summary %<>% mutate(SurveyLength = interval(ymd(Earliest),ymd(Latest)))
+reef.summary %<>% mutate(SurveyLength = SurveyLength%/% ddays(1))
+reef.summary$Record.Rugosity <- round(reef.summary$Record.Rugosity, digits=2)
+reef.summary$Record.Visibility <- round(reef.summary$Record.Visibility, digits=2)
+reef.summary$`Earliest` <- ymd(reef.summary$`Earliest`)
+reef.summary$`Latest` <- ymd(reef.summary$`Latest`)
+
+
+reef.sites <- reef.clean %>% unite(col=Location, c("CountryRegion","Location"), sep = "_")
+reef.sites %<>% group_by(Location) %>% summarise(n= n(), Record.Rugosity=sum(HasRugosityScores)/n(),
+                                                 Record.Visibility=sum(HasVisibility)/n(),Earliest=min(Date),Latest=max(Date),
+                                                 Deepest=max(Depth))
+reef.sites %<>% separate(col=Location, into = c("CountryRegion","Location"),sep = "_")
+reef.sites$`Earliest` <- ymd(reef.sites$`Earliest`)
+reef.sites$`Latest` <- ymd(reef.sites$`Latest`)
+
+reef.sites %<>% group_by(CountryRegion) %>% summarize(SiteNumber=n(),MinSite=min(n))
+
+reef.summary <- cbind(reef.summary,reef.sites$SiteNumber,reef.sites$MinSite)
+colnames(reef.summary) <- c("Country","Number of Surveys", "Recorded Rugosity", 
+                            "Recorded Visibility", "Earliest Survey", 
+                            "Latest Survey", "Lowest Depth", "Days Between",
+                            "Number of Sites", "Lowest Surveys per Site")
+
+reef.summary$'Average Surveys per Site' <- reef.summary$"Number of Surveys"/reef.summary$`Number of Sites`
+reef.summary$'Average Surveys per Site' <- round(reef.summary$'Average Surveys per Site',digits=0)
+
+reef.summary <- reef.summary[, c(1,5,6,8,2,9,11,10,3,4,7)]
+```
+
+
+## Dive Surveys
+
+- Long-lasting, cheap and easy to use.
+- Common method for collecting data.
+- Recreational divers can contribute, allowing more numbers.
+- Crucial to assess modern reefs
+
+## The Block Survey
+
+- Divers set out 50 meter "transect" line.
+- Count fish 5 meters above and to the side of it.
+- Counts fish in a set location for a limited space.
+- What are the limitations?
+
+## Reef Life Survey
+
+- Organized by University of Tasmania.
+- Aggregates their Reef Survey data.
+
+## Project - At First
+
+- Original goal was to compare surveys by reefs.
+- Problems: Most reefs of interest had a low sample size.
+- Question: Can we assess the quality of data in different reef sites?
+
+## Analysis - Overview
+
+- Site and Country
+- Measurements and Time
+- Divers
+
+## Countries with the Highest Survey Numbers
+
+```{r,echo=FALSE}
+reef.one <- reef.summary[order(-reef.summary$`Number of Surveys`),][1:5,]
+kable(reef.one[,c(1,2,3,5,6,7)],booktabs=T,row.names = FALSE,caption = "Summary of Most Surveyed Countries")
+```
+
+## Sites grouped by Average Number of Surveys
+
+```{r,echo=FALSE}
+breaks <- c(0,10,20,40,60,80,100,200)
+tags <- c("0-10","10-20","20-40","40-60","60-80","80-100", ">100")
+  group_tags <- cut(reef.summary$`Average Surveys per Site`,breaks=breaks,
+                  include.lowest=TRUE,right=FALSE,labels=tags)
+  
+ggplot(data=as_tibble(group_tags),mapping=aes(x=value)) +
+  geom_bar(fill="blue") +
+  theme_minimal() +
+  theme(panel.grid.minor=element_blank()) + 
+  labs(x="Average number of Surveys per Site", y="Number of Sites")
+
+```
+
+## Countries by Average Surveys Per Site
+
+```{r,echo=FALSE}
+reef.two <- reef.summary[order(-reef.summary$`Average Surveys per Site`),][1:5,]
+kable(reef.two[,c(1,7,6,5)],booktabs=T,row.names = FALSE,caption="Countries with Highest Surveys per Site")
+```
+
+
+## Rugosity over Time
+
+```{r,echo=FALSE}
+ggplot(data = reef.summary)+
+  geom_line(aes(x = `Earliest Survey`, y = `Recorded Rugosity`,group=1),color = "#FC4E07",size=1.5) + 
+  labs(y="Recorded Rugosity (Proportion)", title="Recorded Rugosity over Time")
+```
+
+
+## Visibility over Time
+
+```{r,echo=FALSE}
+ggplot(data=reef.summary)+
+  geom_line(aes(x = `Earliest Survey`, y = `Recorded Visibility`,group=1),color = "#00AFBB",size=1.5) + 
+  labs(y="Recorded Visibility (Proportion)", title="Recorded Visibility over Time")
+```
+
+## Most Frequent Divers
+
+```{r,echo=FALSE}
+reef.divers <- reef.clean %>% group_by(Divers) %>% summarize(Surveys=n())
+reef.top <- reef.divers[order(-reef.divers$Surveys),][1:5,]
+kable(reef.top,booktabs=T,row.names = FALSE,caption="Most Active Divers")
+```
+
+## Graham - Proportion of Contribution per Site
+
+```{r,echo=FALSE}
+reef.graham <- filter(reef.clean, grepl("Graham Edgar",Divers))
+graham.sites <- subset(reef.clean, Location %in% reef.graham$Location)
+graham.sites %<>% mutate(is.graham = ifelse(grepl("Graham Edgar",Divers)==T,1,0))
+graham.sites %<>% unite(col=Location, c("CountryRegion",Location),sep="_",remove=T)
+graham.sites %<>% group_by(Location) %>% summarise(SiteTot = n(),PercentGraham=sum(is.graham)/n(),totGraham=sum(is.graham))
+graham.sites %<>% separate(col=Location, c("Country","Location"),sep="_")
+graham.sites %<>% mutate(isAustralia = ifelse(Country=="Australia",1,0))
+graham.sites$isAustralia <- as.factor(graham.sites$isAustralia)
+
+ggplot(graham.sites) +
+aes(x = SiteTot, y = PercentGraham,colour = as.factor(isAustralia)) +
+  geom_point(size = 1L) + 
+  labs(x = "Total Site Surveys", y = "Diver's Proportion of Surveys", title = "Proportion of Surveys done by Diver", subtitle= "Graham Edgar", color = "Australia? (1=yes)")
+```
+
+## Without Australia
+
+```{r,echo=FALSE}
+graham.wo <- filter(graham.sites,isAustralia==0)
+ggplot(graham.wo) +
+aes(x = SiteTot, y = PercentGraham) +
+  geom_point(size = 1L,color="blue") + 
+  labs(x = "Total Site Surveys", y = "Diver's Proportion of Surveys", title = "Proportion of Surveys done by Diver", subtitle= "Graham Edgar")
+```
+
+## Summary
+
+- Australia has the most thoroughly recorded data by far.
+- Most locations have very low surveys per site.
+- A change in methodology may have occurred in 2012.
+- Sites with low surveys are vulnerable to diver bias.
+
+## Citations
+
+1. Edgar, GJ and Stuart-Smith, RD, “Systematic global assessment of reef fish communities by the Reef Life Survey program”, Scientific Data, 1 Article 140007. doi:10.1038/sdata.2014.7 ISSN 2052-4463 (2014)
+
+## Questions?

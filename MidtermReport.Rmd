@@ -1,0 +1,201 @@
+---
+title: "Exploration of Reef Life Survey Dive Sites"
+author: "Tim Hogan"
+date: "10/20/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+library(lubridate)
+library(stringr)
+library(kableExtra)
+```
+
+## 1. Introduction
+
+Diving surveys are a long-running and common method used to assess marine life. Because it can integrate recreational divers and research divers alike, research tend to rely on it to assess organisms and biodiversity in coral reefs, using the increasing number of divers to try to gain a larger sample size. In these cases, the main techniques used are reef surveys, where the divers move along a set path and count certain organisms in a set space. As reef life declines, it is extremely important to understand the quality of these reef survey data.
+
+Conceptually, reef surveys have two major limitations. On one hand, they usually cover a small amount of space. When studying a coral reef, known for having a large number of organisms in a small space, and fishes that tend to travel in groups, a small number of surveys at a set location may not properly reflect the diversity of the reef. As such, having a large number of samples at each individual location is crucial. Additionally, since data is taken by an individual, it is important to account for individual biases and errors, including preference for counting and rounding, mistakes for counting fish, and other factors.
+
+Organizations recognize these limitations and are finding ways to assess and work around them. The University of Tasmania aggregated thirteen years of reef survey data into one dataset, Reef Life Survey. By doing this, it becomes much easiest to document and assess how many surveys were done in certain countries and locations, as well as track individuals.
+
+In this report, I will explore the Reef Life Survey dataset to analyze the quality of data taken in different locations. I will focus on three areas: the distribution of surveys by country, how measurements were taken over time, and analyzing the divers.
+
+
+```{r,include=FALSE}
+reefdata <- read.csv("Reef_Life_Survey_(RLS)#_Survey_Locations-survey_locations.csv",header=T)
+reef.clean <- subset(reefdata, select=-c(Hour,FID,StateArea,SiteName,PQZipUrl,geom))
+reef.clean %<>% separate(SurveyDate, c("Date","Time"),sep="T")
+reef.clean <- subset(reef.clean, select=-c(Time,Direction))
+reef.clean %<>% mutate(HasRugosityScores = ifelse(HasRugosityScores=="No",0,1))
+reef.clean %<>% mutate(HasVisibility = ifelse(Visibility==0, 0, 1))
+reef.clean$HasVisibility[is.na(reef.clean$HasVisibility)] <- 0
+reef.clean %<>% mutate(Local = ifelse(CountryRegion=="Australia",1,0))
+
+
+reef.summary <- reef.clean %>% group_by(CountryRegion) %>% summarise(SurveyNumber= n(), 
+                                                                     Record.Rugosity=sum(HasRugosityScores)/n(),
+                                                                     Record.Visibility=sum(HasVisibility)/n(),
+                                                                     Earliest=min(Date),Latest=max(Date),
+                                                                     Deepest=max(Depth))
+reef.summary %<>% mutate(SurveyLength = interval(ymd(Earliest),ymd(Latest)))
+reef.summary %<>% mutate(SurveyLength = SurveyLength%/% ddays(1))
+reef.summary$Record.Rugosity <- round(reef.summary$Record.Rugosity, digits=2)
+reef.summary$Record.Visibility <- round(reef.summary$Record.Visibility, digits=2)
+reef.summary$`Earliest` <- ymd(reef.summary$`Earliest`)
+reef.summary$`Latest` <- ymd(reef.summary$`Latest`)
+
+
+reef.sites <- reef.clean %>% unite(col=Location, c("CountryRegion","Location"), sep = "_")
+reef.sites %<>% group_by(Location) %>% summarise(n= n(), Record.Rugosity=sum(HasRugosityScores)/n(),
+                                                 Record.Visibility=sum(HasVisibility)/n(),Earliest=min(Date),Latest=max(Date),
+                                                 Deepest=max(Depth))
+reef.sites %<>% separate(col=Location, into = c("CountryRegion","Location"),sep = "_")
+reef.sites$`Earliest` <- ymd(reef.sites$`Earliest`)
+reef.sites$`Latest` <- ymd(reef.sites$`Latest`)
+
+reef.sites %<>% group_by(CountryRegion) %>% summarize(SiteNumber=n(),MinSite=min(n))
+
+reef.summary <- cbind(reef.summary,reef.sites$SiteNumber,reef.sites$MinSite)
+colnames(reef.summary) <- c("Country","Number of Surveys", "Recorded Rugosity", 
+                            "Recorded Visibility", "Earliest Survey", 
+                            "Latest Survey", "Lowest Depth", "Days Between",
+                            "Number of Sites", "Lowest Surveys per Site")
+
+reef.summary$'Average Surveys per Site' <- reef.summary$"Number of Surveys"/reef.summary$`Number of Sites`
+reef.summary$'Average Surveys per Site' <- round(reef.summary$'Average Surveys per Site',digits=0)
+
+reef.summary <- reef.summary[, c(1,5,6,8,2,9,11,10,3,4,7)]
+```
+
+## 2. Methods
+
+The Reef Life Survey data was conducted primarily using block transects. This method entails placing a 50 meter-long transect at a depth, recording that depth, and moving up and down the transect, counting all organisms within a 5-meter “block” around it. This primarily captures creatures that are within the reef and not too far out, and keeps numbers countable. The dataset also includes the Latitude and Longitude of deployment, as well as the country and site name, and a variety of other measurements. 
+
+Two other variables were taken for each survey, being “rugosity” and “visibility”. Rugosity is a qualitative measurement describing the “roughness” of the seabed. If the seabed is primarily flat, rugosity is low, but if corals are giving the surface an odd shape, rugosity is higher. Visibility primarily measures how far you can see in the water - the higher the visibility the more you can see.
+
+The data was downloaded directly from Reef Life Survey. There are five datasets to select from, but to best answer our question, I chose to focus on the “Survey Locations” dataset. Primarily, it was due to focus specifically on the sites and associated measurements, and because it contained information regarding general measurements (primarily visibility) that some of the other datasets did not include. Units are not listed, but seem to correspond to meters, since Australia follows the metric system.
+
+After downloading the data, the data was cleaned using Tidyverse in R. First, I selected the variables that would be analyzed, and removed columns that were redundant or had no clear meaning. Redundant columns would include a column that contained information present in other columns. Unclear columns primarily referred to something called “PQ Scores”, which I could not easily find in references.
+
+## 3. Analysis
+
+### 3.1 Survey Assessment by Country
+
+To analyze sites, I decided to group and summarize data into locations and count the number of surveys and sites for each one. The reason becomes clear in Table 1, which displays the 5 countries with the most surveys.
+
+```{r,echo=FALSE}
+reef.one <- reef.summary[order(-reef.summary$`Number of Surveys`),][1:5,]
+kable(reef.one[,c(1,2,3,5,6,7)],booktabs=T,row.names = FALSE,caption = "Summary of Most Surveyed Countries")
+```
+
+What becomes clear is that Australia has the most surveys by a baffling degree. While the number is surprising, it does make sense: University of Tasmania is based in Australia, and it is most likely easier and less expensive to organize research within the country rather than conducting it internationally. Because of this, it not only has the most surveys, but the most sites, as well as the highest average number of surveys per sites. Effectively, this means Australia’s reefs will most likely be much better and much more consistently documented than any other country’s.
+
+However, one other thing should also be noted: the survey length for Australia is the longest of all of these countries, spanning the whole length of 2006 to 2019. This length raises the question of consistency - if any major change in protocol occurred during this timespan, earlier datasets may be less valuable. This will be investigated more in Section 3.2.
+
+```{r,echo=FALSE}
+breaks <- c(0,10,20,40,60,80,100,200)
+tags <- c("0-10","10-20","20-40","40-60","60-80","80-100", ">100")
+  group_tags <- cut(reef.summary$`Average Surveys per Site`,breaks=breaks,
+                  include.lowest=TRUE,right=FALSE,labels=tags)
+  
+ggplot(data=as_tibble(group_tags),mapping=aes(x=value)) +
+  geom_bar(fill="blue") +
+  theme_minimal() +
+  theme(panel.grid.minor=element_blank()) + 
+  labs(x="Average number of Surveys per Site", y="Number of Sites")
+
+```
+
+We can also analyze how many surveys were done per site in each country. Figure 1 bins countries by their average number of surveys per site. What becomes clear is that most countries have a very low number of surveys, with not even twenty for the total country. This would entail that most of these countries may not have sufficient survey samples for their reefs.
+
+Lastly, we can investigate the numbrer of sites per country. While some countries seem to have very low site numbers, they can also have a relatively high number of surveys per site, as displayed in Table 2. This entails that large efforts were put into these reefs and sites, either because they have one smaller reef, or because that reef was a point of interest. 
+
+```{r,echo=FALSE}
+reef.two <- reef.summary[order(-reef.summary$`Average Surveys per Site`),][1:5,]
+kable(reef.two[,c(1,7,6,5)],booktabs=T,row.names = FALSE,caption="Countries with Highest Surveys per Site")
+```
+
+### 3.1 Measurements with Time
+
+Now, we’ll primarily focus on the measurements taken for the site: primarily, rugosity, visibility, and depth. Of these, depth is well-documented, since it’s a required part of the method. However, on the other hand, rugosity and visibility are inconsistently present at different points, containing a lot of NA’s. Additionally, sometimes visibility is also listed as 0. While this may not necessarily be an NA, it still represents conditions where divers will not be able to see the reef very well. As such, there are clearly sites with bad measurements.
+
+To investigate this more closely, I calculated the number of present, non-zero values for both rugosity and visibility in each country, and then divided it by the total of sites done. This will effectively calculate the proportion of visibility and rugosity measured.
+
+However, the question is, can these two values represent quality of measurement at all? While the answer does not become clear, an interesting pattern is revealed when these measurements are shown with time.
+
+```{r,echo=FALSE}
+ggplot(data = reef.summary)+
+  geom_line(aes(x = `Earliest Survey`, y = `Recorded Rugosity`,group=1),color = "#FC4E07",size=1.5) + 
+  labs(y="Recorded Rugosity (Proportion)", title="Recorded Rugosity over Time")
+
+ggplot(data=reef.summary)+
+  geom_line(aes(x = `Earliest Survey`, y = `Recorded Visibility`,group=1),color = "#00AFBB",size=1.5) + 
+  labs(y="Recorded Visibility (Proportion)", title="Recorded Visibility over Time")
+```
+
+Figure 2 displays these proportions of measured rugosity and visibility respectively, with time corresponding to the earliest date of a survey in a given country. Two things become clear: after a certain year, rugosity was not measured at all, and after a different year, visibility was always measured. The increase in visibility most likely reflects better documentation - dive books have a slot for visibility, so constantly recording visibility is not surprising. The change for rugosity is unclear and vague. Primarily, it seems to show a change in methodology after a certain date, but what reason seems to be unclear. However, it seems to convey that researchers began to value rugosity less as a measurement, so they stopped recording it.
+
+### 3.3 Divers
+
+While this dataset has a large record in divers, it is also difficult to observe the tendencies of individual divers and their biases. Primarily, this is because this dataset does not include any measurements they may have taken.
+
+However, there is still information we can explore from them. Table 3 shows the ten divers that have conducted the most surveys in this dataset. The interesting thing that I’ll note is that Graham Edgar, the most frequent diver, is one of the people that organized the data in Reef Life Survey, and is also one of the citation names. 
+
+```{r,echo=FALSE}
+reef.divers <- reef.clean %>% group_by(Divers) %>% summarize(Surveys=n())
+reef.top <- reef.divers[order(-reef.divers$Surveys),][1:5,]
+kable(reef.top,booktabs=T,row.names = FALSE,caption="Most Active Divers")
+```
+
+Since Graham conducted so many dives, I will analyze Graham Edgar more closely in the dataset to investigate potential patterns that may appear.
+
+First, after a simple text analysis, it appears that his name appears 2170 times in the dataset. This is much larger than the measured 858 from the above. However, the above includes Graham Edgar alone, and not with peers. This showcases that the majority of surveys include multiple divers.
+
+However, we can also look further. Figure 3 focuses on the surveys Graham has contributed to. However, it measures two quantities: the total number of surveys done by the site, and the proportion of surveys done by Graham at that site, ranging from 0 to 1. The points are colored here based off of whether or not the site is in Australia.
+
+```{r,echo=FALSE}
+reef.graham <- filter(reef.clean, grepl("Graham Edgar",Divers))
+graham.sites <- subset(reef.clean, Location %in% reef.graham$Location)
+graham.sites %<>% mutate(is.graham = ifelse(grepl("Graham Edgar",Divers)==T,1,0))
+graham.sites %<>% unite(col=Location, c("CountryRegion",Location),sep="_",remove=T)
+graham.sites %<>% group_by(Location) %>% summarise(SiteTot = n(),PercentGraham=sum(is.graham)/n(),totGraham=sum(is.graham))
+graham.sites %<>% separate(col=Location, c("Country","Location"),sep="_")
+graham.sites %<>% mutate(isAustralia = ifelse(Country=="Australia",1,0))
+graham.sites$isAustralia <- as.factor(graham.sites$isAustralia)
+
+ggplot(graham.sites) +
+aes(x = SiteTot, y = PercentGraham,colour = as.factor(isAustralia)) +
+  geom_point(size = 1L) + 
+  labs(x = "Total Site Surveys", y = "Diver's Proportion of Surveys", title = "Proportion of Surveys done by Diver", subtitle= "Graham Edgar", color = "Australia? (1=yes)")
+```
+
+The pattern here seems to indicate a few things. Firstly, some sites with a low number of surveys were done entirely by Graham (proportion is 1). This indicates one problem with low survey number: it makes the sample more vulnerable the biases of a single individual, who contributed to all parts of the survey. As survey number increases, the proportions tend to decrease.
+
+```{r,echo=FALSE}
+graham.wo <- filter(graham.sites,isAustralia==0)
+ggplot(graham.wo) +
+aes(x = SiteTot, y = PercentGraham) +
+  geom_point(size = 1L,color="blue") + 
+  labs(x = "Total Site Surveys", y = "Diver's Proportion of Surveys", title = "Proportion of Surveys done by Diver", subtitle= "Graham Edgar")
+```
+
+However, one other caveat is that, with the coloring, it’s clear to see that there are two “groups” of data. Australia has more points and covers a much larger range than all other countries. Figure 4 displays the same data excluding Australia. Here, a similar pattern can be made out, but it is much less distinct. 
+
+
+## 4. Discussion
+One limitation behind this report is a lack of analysis on sites alone, due to the focus on countries. This can miss out on resolutions for patterns over time, especially in countries like Australia, and can miss key pieces of information. However, it can still capture the general trend, since the vast majority of countries have very few surveys. Future exploration and analysis can be conducted on the more-studied countries.
+
+Despite these limitations, we managed to successfully find and display key patterns in this exploratory analysis. On the forefront, we observed, that Australia is surveyed more and better than any other country by a large margin. This seems to indicate that Reef Life Survey would be able to confidently compare environments within Australia more than most other locations.
+
+Additionally, the drop in measured rugosity observed may carry significant implications for surveyed data. If the measuring techniques were changed significantly, it may become more difficult to integrate and compare surveys. This carries many possible risks: some countries’ have surveys only preceding the time of that change, whereas some others only contain data afterwards. The reason behind the drop in measured rugosity and other possible implications should be investigated further.
+
+In particular, our results highlight more of the downsides with low sample sizes. Low survey numbers most likely correlate with a lack of personnel and divers with research, causing individual bias to be highlighted as shown in section 3.3. This means that sites with low sample numbers in the Reef Life Survey dataset must be viewed with caution, and the conclusions made from them and the data should consider the low sample number and potential impact the diver may have on the data.
+
+
+## 5. Bibliography
+
+1. Edgar, GJ and Stuart-Smith, RD, “Systematic global assessment of reef fish communities by the Reef Life Survey program”, Scientific Data, 1 Article 140007. doi:10.1038/sdata.2014.7 ISSN 2052-4463 (2014)
